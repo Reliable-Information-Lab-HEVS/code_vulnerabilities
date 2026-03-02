@@ -33,6 +33,7 @@ from natsort import natsorted
 from p_tqdm import p_map
 from tqdm import tqdm
 
+from pathlib import Path
 from cweval.ai import AIAPI
 from cweval.commons import BENCHMARK_DIR, LANGS
 from cweval.ppt import make_prompt
@@ -58,13 +59,16 @@ class Gener:
         temperature: float = 0.8,
         **kwargs,
     ):
+
         self.model = model
         self.ppt = ppt
         self.num_proc = num_proc
-        self.langs = langs
+        if isinstance(langs, str):
+            self.langs = [langs]
+        else:
+            self.langs = langs
         self.exclude_path = exclude_path
         self.include_path = include_path
-        print(f'Using langs: {self.langs}')
         self.ai_kwargs = {
             'n': n,
             'max_completion_tokens': max_completion_tokens,
@@ -90,7 +94,10 @@ class Gener:
 
             self.eval_path = eval_path
 
+        
+
         self.cases = self._get_cases()
+
 
     def _get_cases(self) -> Dict[str, Dict[str, str]]:
         cases: Dict[str, str] = {}
@@ -152,6 +159,7 @@ class Gener:
         ai_kwargs: Dict[str, Any],
         rank: int,
     ) -> None:
+
         num_samples = ai_kwargs.get('n', 1)
         for i in range(num_samples):
             out_path = case['out_path_template'].format(index=i)
@@ -163,6 +171,8 @@ class Gener:
             )
             return
 
+        # print **ai_kwargs
+        print(f'The kwargs for AIAPI are: {ai_kwargs}', flush=True)
         aiapi = AIAPI(ai, **ai_kwargs)
         prompt = make_prompt(ppt)
         resps = prompt.req_ai(
@@ -189,7 +199,6 @@ class Gener:
             range(len(self.cases)),  # workaround: index as rank
             num_cpus=self.num_proc,
         )
-
 
 if __name__ == "__main__":
     fire.Fire(Gener)

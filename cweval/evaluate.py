@@ -139,6 +139,37 @@ class Evaler:
                     if '_task.' in file:
                         self.task_files.append(os.path.join(root, file))
 
+    def adjust_import_statements(self, test_file: str, task_file: str, lang: str) -> None:
+        # adjust the import statements in the test_file
+        with open(test_file, 'r') as f:
+            test_code = f.read()
+        
+        # if "mutated" is not in the test_file name, no need to adjust
+        if '_mutated' not in os.path.basename(test_file):
+            return
+        if lang == 'py':
+            # get the name before _mutated
+            name_of_test_before_mutated = os.path.basename(test_file).split('_mutated')[0]
+            # add _task to get the task file name
+            name_of_task = name_of_test_before_mutated + '_task'
+            # replace "from cwe_xxx_x_task import ..." with "from task_file_name import ..."
+            import_line_prefix = f'from {name_of_task} import '
+            new_import_line_prefix = f'from {os.path.splitext(os.path.basename(task_file))[0]} import '
+            new_test_code_lines = []
+            for line in test_code.splitlines():
+                if line.startswith(import_line_prefix):
+                    new_line = line.replace(import_line_prefix, new_import_line_prefix)
+                    new_test_code_lines.append(new_line)
+                else:
+                    new_test_code_lines.append(line)
+            new_test_code = '\n'.join(new_test_code_lines)
+            with open(test_file, 'w') as f:
+                f.write(new_test_code)
+        else:
+            raise NotImplementedError(f'Adjusting import statements not implemented for {lang = }')
+    
+   
+
     def _copy_test_files(self) -> None:
         # copy test files from benchmark to generated for testing
         self._fill_task_files()
@@ -151,13 +182,20 @@ class Evaler:
                 if task_file.startswith(generated_path.rstrip('/') + '/'):
                     break
             rel_task_file_path = os.path.relpath(task_file, generated_path)
-            ref_test_file_path = os.path.join(
-                BENCHMARK_DIR,
-                os.path.splitext(rel_task_file_path.replace('_task.', '_test.'))[0]
-                + '.py',
-            )
+            # if _mutated is in the file name, take the part before and add _test.py
+            if '_mutated' in rel_task_file_path:
+                ref_test_file_path = os.path.join(BENCHMARK_DIR, rel_task_file_path.split('_mutated')[0] + '_test.py')
+            else:
+                ref_test_file_path = os.path.join(
+                    BENCHMARK_DIR,
+                    os.path.splitext(rel_task_file_path.replace('_task.', '_test.'))[0]
+                    + '.py',
+                )
             # print(f'{ref_test_file_path} ==>> {test_file}')
             shutil.copy(ref_test_file_path, test_file)
+            # adjust the import statements if needed
+            lang = self._filename_to_lang(test_file)
+            self.adjust_import_statements(test_file, task_file, lang)
 
     def _merge_results(self) -> None:
         # python cweval/evaluate.py _merge_results --eval_path evals/eval_241110_014704

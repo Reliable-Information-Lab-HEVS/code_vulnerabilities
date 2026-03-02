@@ -4,7 +4,7 @@ from typing import Dict, List
 
 import litellm
 
-# litellm.set_verbose = True
+litellm.set_verbose = True
 
 
 class AIAPI(abc.ABC):
@@ -56,6 +56,8 @@ class AIAPI(abc.ABC):
             else:
                 all_kwargs.pop('n', 1)
 
+            # print the kwargs
+            print(f'Requesting {n_this} samples with kwargs: {all_kwargs}')
             comp = litellm.completion(
                 model=self.model,
                 messages=messages,
