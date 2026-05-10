@@ -44,15 +44,19 @@ OUT_DIR = Path("/cluster/raid/home/stea/CWEval/embeddings")
 # Filename patterns. Capture the CWE id and the mutation key.
 #   token replacement:    <cwe>_<lang>_mutated_token_<pos>_task.<ext>
 #   character mutations:  <cwe>_<lang>_mutated_<pos>_<variant>_task.<ext>
+# Optional `_v\d+` matches the evals_bigdata scheme where each mutation has
+# six prompt-version variants; v is folded into `mut` so each variant becomes
+# its own row (otherwise the six variants would collide on the same mut key).
+# Old (no v-tag) names continue to parse with the original mut value.
 _FNAME_RES = {  # eval JSON entries end in _test.<py> for all categories
-    "mutated_token_replacement":   re.compile(r"(?P<cwe>.+?)(?:_[a-z]+)?_mutated_token_(?P<mut>\d+)_test\.[a-z]+$"),
-    "mutated_prompts_character":   re.compile(r"(?P<cwe>.+?)(?:_[a-z]+)?_mutated_(?P<mut>\d+_\d+)_test\.[a-z]+$"),
-    "mutated3_prompts_character":  re.compile(r"(?P<cwe>.+?)(?:_[a-z]+)?_mutated_(?P<mut>\d+_\d+)_test\.[a-z]+$"),
+    "mutated_token_replacement":   re.compile(r"(?P<cwe>.+?)(?:_[a-z]+)?_mutated_token_(?P<mut>\d+(?:_v\d+)?)_test\.[a-z]+$"),
+    "mutated_prompts_character":   re.compile(r"(?P<cwe>.+?)(?:_[a-z]+)?_mutated_(?P<mut>\d+_\d+(?:_v\d+)?)_test\.[a-z]+$"),
+    "mutated3_prompts_character":  re.compile(r"(?P<cwe>.+?)(?:_[a-z]+)?_mutated_(?P<mut>\d+_\d+(?:_v\d+)?)_test\.[a-z]+$"),
 }
 _FNAME_TASK = {
-    "mutated_token_replacement":   r"(?P<cwe>.+?)(?:_[a-z]+)?_mutated_token_(?P<mut>\d+)_task\.{ext}$",
-    "mutated_prompts_character":   r"(?P<cwe>.+?)(?:_[a-z]+)?_mutated_(?P<mut>\d+_\d+)_task\.{ext}$",
-    "mutated3_prompts_character":  r"(?P<cwe>.+?)(?:_[a-z]+)?_mutated_(?P<mut>\d+_\d+)_task\.{ext}$",
+    "mutated_token_replacement":   r"(?P<cwe>.+?)(?:_[a-z]+)?_mutated_token_(?P<mut>\d+(?:_v\d+)?)_task\.{ext}$",
+    "mutated_prompts_character":   r"(?P<cwe>.+?)(?:_[a-z]+)?_mutated_(?P<mut>\d+_\d+(?:_v\d+)?)_task\.{ext}$",
+    "mutated3_prompts_character":  r"(?P<cwe>.+?)(?:_[a-z]+)?_mutated_(?P<mut>\d+_\d+(?:_v\d+)?)_task\.{ext}$",
 }
 
 
