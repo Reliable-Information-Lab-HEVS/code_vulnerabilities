@@ -373,16 +373,24 @@ def compile_list(
     check: bool = True,
     num_proc: int = 8,
 ) -> List[Tuple[int, str, str]]:
-    # compiler sanity check
-    cmd_checks = [
-        'gcc --version',
-        'g++ --version',
-        'go version',
-    ]
+    assert len(src_path_list) == len(compiled_path_list)
+    # If there is nothing to compile (e.g. Python-only eval), skip the
+    # compiler sanity checks entirely — they would otherwise fail on a
+    # cluster where, say, the bundled Go binary is the wrong architecture.
+    if not src_path_list:
+        return []
+    # Only check the compilers we actually need for this batch — avoids
+    # tripping on unrelated x-arch/broken toolchains.
+    exts = {os.path.splitext(p)[1][1:] for p in src_path_list}
+    cmd_checks: List[str] = []
+    if 'c' in exts:
+        cmd_checks.append('gcc --version')
+    if 'cpp' in exts:
+        cmd_checks.append('g++ --version')
+    if 'go' in exts:
+        cmd_checks.append('go version')
     for cmd_check in cmd_checks:
         returncode, stdout, stderr = exec_cmd_shell(cmd_check, check=True)
-
-    assert len(src_path_list) == len(compiled_path_list)
     rets: List[Tuple[int, str, str]] = []
     if num_proc == 1:
         for src_path, compiled_path in zip(src_path_list, compiled_path_list):

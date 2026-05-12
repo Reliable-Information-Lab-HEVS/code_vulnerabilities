@@ -37,10 +37,12 @@ def handle_new_data_classes(names_data):
                 raise ValueError(f'Language {name_data} not supported, make sure the first two characters correspond to a supported language, one of {LANGS}')
             else:
                 target_dir = os.path.join(BENCHMARK_DIR, 'core', short_name)
-                if os.path.exists(target_dir):
-                    raise ValueError(f'Target directory {target_dir} already exists, please remove it first.')
-                if not os.path.exists(target_dir):
-                    os.makedirs(target_dir)
+                # Allow exists-but-empty (e.g. an overlay-mounted scratch dir
+                # on CSCS). Only refuse if the dir already has content, since
+                # we never want to overwrite a real benchmark/core/<lang>.
+                if os.path.exists(target_dir) and os.listdir(target_dir):
+                    raise ValueError(f'Target directory {target_dir} already exists and is non-empty, please remove it first.')
+                os.makedirs(target_dir, exist_ok=True)
                 # copy test cases from backup
                 add_test_cases(short_name, target_dir)
                 new_langs.append(short_name)

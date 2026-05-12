@@ -26,6 +26,7 @@ import json
 import math
 import multiprocessing as mp
 import os
+import re
 import shutil
 from typing import Dict, List, Tuple
 
@@ -88,15 +89,84 @@ class Evaler:
 
         print(f'{len(self.raw_files) = }', flush=True)
 
+    @staticmethod
+    def _strip_main_block(code: str, lang: str) -> str:
+        # Chat-style models (e.g. DS-33B) emit an example `main()` demo alongside
+        # the requested function. We append the test entrypoint (which has its
+        # own main()), so duplicate-main causes the file to fail to compile.
+        # Strip the model's main() block for compiled langs. Brace matching
+        # naively skips strings, char literals, and // / /* */ comments.
+        if lang == 'go':
+            head = re.compile(r'^[ \t]*func\s+main\s*\(\s*\)\s*\{', re.MULTILINE)
+        elif lang in ('c', 'cpp'):
+            head = re.compile(r'^[ \t]*(?:int|void)\s+main\s*\([^)]*\)\s*\{', re.MULTILINE)
+        else:
+            return code
+        out = []
+        pos = 0
+        while pos < len(code):
+            m = head.search(code, pos)
+            if not m:
+                out.append(code[pos:])
+                break
+            out.append(code[pos:m.start()])
+            i = m.end()
+            depth = 1
+            in_str = in_chr = in_line = in_blk = False
+            while i < len(code) and depth > 0:
+                c = code[i]
+                nxt = code[i + 1] if i + 1 < len(code) else ''
+                if in_line:
+                    if c == '\n': in_line = False
+                elif in_blk:
+                    if c == '*' and nxt == '/': in_blk = False; i += 1
+                elif in_str:
+                    if c == '\\': i += 1
+                    elif c == '"': in_str = False
+                elif in_chr:
+                    if c == '\\': i += 1
+                    elif c == "'": in_chr = False
+                else:
+                    if c == '/' and nxt == '/': in_line = True; i += 1
+                    elif c == '/' and nxt == '*': in_blk = True; i += 1
+                    elif c == '"': in_str = True
+                    elif c == "'": in_chr = True
+                    elif c == '{': depth += 1
+                    elif c == '}': depth -= 1
+                i += 1
+            pos = i
+        return ''.join(out)
+
+    @staticmethod
+    def _missing_preamble(code: str, lang: str) -> bool:
+        # Models sometimes emit only the function body, omitting package/import/
+        # preamble that was visible in their prompt context. Detect that so we
+        # can prepend it back from the ref task file.
+        if lang == 'go':
+            return 'package ' not in code
+        if lang in ('c', 'cpp'):
+            return '#include' not in code and 'int main' not in code
+        return False
+
     def _parse_raw_file(self, raw_file_path: str) -> str:
         # raw_code + lines after BEGIN ENTRYPOINT in ref_task_file
         # python cweval/evaluate.py _parse_raw_file --eval_path evals/eval_241110_014704
         with open(raw_file_path, 'r') as f:
             raw_str = f.read()
 
-        raw_code = get_code_from(raw_str, only_first=True)
+        # Use ALL code blocks joined, not just the first. Chat-style models
+        # (e.g. CodeLlama-70B) often split an answer into multiple ```c blocks
+        # under numbered steps ("1. Includes... 2. Define struct... 3. Impl");
+        # taking only_first dropped the actual function body, leaving the file
+        # with just `#include` lines and forcing a linker error → systematic
+        # `functional=False`. Joining all blocks recovers the full response.
+        # For single-block raws this is a no-op (same as `only_first=True`).
+        raw_code = get_code_from(raw_str)
         if not raw_code:
             raw_code = raw_str
+
+        lang_ext = os.path.splitext(raw_file_path)[1][1:]
+        raw_code = self._strip_main_block(raw_code, lang_ext)
 
         # get the entrypoint from the corresponding task file
         for generated_path in self.generated_paths:
@@ -112,6 +182,18 @@ class Evaler:
         # TODO hack for python cases
         if self.entrypoint_anchor not in ref_task_code:
             return raw_code
+
+        # If the raw is missing the language preamble (e.g. Go without
+        # `package main` or imports), reconstruct from the ref task's content
+        # before `// BEGIN PROMPT` — that's the prompt prefix the model saw.
+        if self._missing_preamble(raw_code, lang_ext):
+            prompt_anchor = 'BEGIN PROMPT'
+            if prompt_anchor in ref_task_code:
+                preamble = ref_task_code.split(prompt_anchor, 1)[0]
+                # Drop the trailing partial line that started the anchor
+                # comment (e.g. "// " or "# " before "BEGIN PROMPT").
+                preamble = preamble.rsplit('\n', 1)[0] if '\n' in preamble else ''
+                raw_code = preamble.rstrip() + '\n\n' + raw_code.lstrip()
 
         entrypoint_src_line = [
             line
@@ -166,7 +248,10 @@ class Evaler:
             with open(test_file, 'w') as f:
                 f.write(new_test_code)
         else:
-            raise NotImplementedError(f'Adjusting import statements not implemented for {lang = }')
+            # No import-path adjustment needed for compiled / non-Python tests:
+            # their test files derive task_name from their own filename and
+            # reference the compiled binary by name (see e.g. benchmark/core/go/*_test.py).
+            return
     
    
 
@@ -227,8 +312,15 @@ class Evaler:
             json.dump(all_res, f, indent=2)
 
     def _filename_to_lang(self, path: str) -> str:
-        # path: evals/eval_241110_014704/generated_X/<...>/cwe_022_0_c_test.py -> c
-        # evals/eval_241110_014704/generated_X/<...>/cwe_022_0_test.py -> py
+        # path: evals/.../generated_X/core/<lang>/<...>_test.py
+        # Prefer to read the language directly from the path's `core/<lang>/`
+        # segment — robust to mutated filenames where `_test`'s sibling token
+        # is something like 'v1', not the language code.
+        parts = path.replace(os.sep, '/').split('/')
+        for i, p in enumerate(parts[:-1]):
+            if p == 'core' and parts[i + 1] in LANGS:
+                return parts[i + 1]
+        # Fallback: parse from filename (handles flat layouts).
         filename = os.path.splitext(os.path.basename(path))[0]
         lang = filename.split('_')[-2]
         if lang.isdigit():
